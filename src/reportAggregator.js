@@ -90,7 +90,7 @@ class ReportAggregator {
     }
     createReport() {
         return __awaiter(this, void 0, void 0, function* () {
-            this.options.LOG.info("Report Generation started");
+            this.options.LOG.info("Report Aggregation started");
             let metrics = new types_1.Metrics();
             let suites = [];
             let specs = [];
@@ -126,12 +126,38 @@ class ReportAggregator {
             for (let j = 0; j < this.reports.length; j++) {
                 try {
                     let report = this.reports[j];
-                    metrics.passed += report.metrics.passed;
-                    metrics.failed += report.metrics.failed;
-                    metrics.skipped += report.metrics.skipped;
+                    let suitePassed = true; // Assume the suite passed initially
                     for (let k = 0; k < report.suites.length; k++) {
                         let suiteInfo = report.suites[k];
-                        this.updateSuiteMetrics(metrics, suiteInfo);
+                        for (let m = 0; m < suiteInfo.tests.length; m++) {
+                            if (suiteInfo.tests[m].state !== 'passed') {
+                                suitePassed = false; // If any test fails, mark the suite as failed
+                                break;
+                            }
+                        }
+
+                        if (suitePassed) {
+                            metrics.passed += 1; // If the suite passed, increment passed count
+                        } else {
+                            metrics.failed += 1; // If the suite failed, increment failed count
+                        }
+
+                        let start = dayjs_1.default.utc(suiteInfo.start);
+                        if (metrics.start) {
+                            if (start.isBefore(metrics.start)) {
+                                metrics.start = start.utc().format(timeFormat);
+                            }
+                        } else {
+                            metrics.start = start.utc().format(timeFormat);
+                        }
+                        let end = dayjs_1.default.utc(suiteInfo.end);
+                        if (metrics.end) {
+                            if (end.isAfter(dayjs_1.default.utc(metrics.end))) {
+                                metrics.end = end.utc().format(timeFormat);
+                            }
+                        } else {
+                            metrics.end = end.utc().format(timeFormat);
+                        }
                         suites.push(suiteInfo);
                     }
                 }
@@ -165,15 +191,41 @@ class ReportAggregator {
                 this.reports = [];
                 this.reports.push(report);
             }
-            this.options.LOG.info("Aggregated " + specs.length + " specs, " + suites.length + " suites, ");
+            this.options.LOG.info("Aggregated " + specs.length + " specs, " + suites.length + " suites, " + this.reports.length + " reports, ");
             this.reportFile = path.join(process.cwd(), this.options.outputDir, this.options.filename);
+            if (this.options.removeOutput) {
+                for (let i = 0; i < suites.length; i++) {
+                    let suite = suites[i].suite;
+                    if (suite && suite.tests) {
+                        for (let j = 0; j < suite.tests.length; j++) {
+                            let test = suite.tests[j];
+                            test.output = [];
+                        }
+                    }
+                }
+            }
             let reportData = new types_1.ReportData(this.options.reportTitle, this.reports[0].info, suites, metrics, this.reportFile, this.options.browserName);
+            htmlGenerator_1.default.htmlOutput(this.options, reportData);
+            this.options.LOG.info("Report Aggregation completed");
+            let jsFiles = path.join(__dirname, '../css/');
+            let reportDir = path.join(process.cwd(), this.options.outputDir);
+            yield (0, copyFiles_1.default)(jsFiles, reportDir);
+            this.options.LOG.info('copyfiles complete : ' + jsFiles + " to " + reportDir);
             try {
-                yield htmlGenerator_1.default.htmlOutput(this.options, reportData);
-                this.options.LOG.info("Report Aggregation completed");
+                if (this.options.showInBrowser) {
+                    let childProcess = yield open(reportData.reportFile
+                        // ,{ app:
+                        //         {
+                        //         name: 'google chrome',
+                        //         arguments: ['--incognito']
+                        //         }
+                        // }
+                    );
+                    this.options.LOG.info('browser launched');
+                }
             }
             catch (ex) {
-                console.error("Report Aggregation failed: " + ex);
+                this.options.LOG.error('Error opening browser:' + ex);
             }
         });
     }
